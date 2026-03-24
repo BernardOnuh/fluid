@@ -1,8 +1,8 @@
 import { Request, Response } from "express";
 import StellarSdk from "@stellar/stellar-sdk";
 import { Config } from "../config";
-
 import { FeeBumpSchema, FeeBumpRequest } from "../schemas/feeBump";
+import { signTransaction } from "../signing";
 
 interface FeeBumpResponse {
   xdr: string;
@@ -10,11 +10,11 @@ interface FeeBumpResponse {
   hash?: string;
 }
 
-export function feeBumpHandler(
+export async function feeBumpHandler(
   req: Request,
   res: Response,
   config: Config
-): void {
+): Promise<void> {
   try {
     const result = FeeBumpSchema.safeParse(req.body);
 
@@ -62,18 +62,14 @@ export function feeBumpHandler(
 
     const feeAmount = Math.floor(config.baseFee * config.feeMultiplier);
 
-    const feePayerKeypair = StellarSdk.Keypair.fromSecret(
-      config.feePayerSecret
-    );
-
     const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
-      feePayerKeypair,
+      config.feePayerPublicKey,
       feeAmount,
       innerTransaction,
       config.networkPassphrase
     );
 
-    feeBumpTx.sign(feePayerKeypair);
+    await signTransaction(feeBumpTx, config.feePayerSecret);
 
     const feeBumpXdr = feeBumpTx.toXDR();
 
@@ -84,24 +80,22 @@ export function feeBumpHandler(
 
     if (submit && config.horizonUrl) {
       const server = new StellarSdk.Horizon.Server(config.horizonUrl);
-      server
-        .submitTransaction(feeBumpTx)
-        .then((result: any) => {
-          const response: FeeBumpResponse = {
-            xdr: feeBumpXdr,
-            status: "submitted",
-            hash: result.hash,
-          };
-          res.json(response);
-        })
-        .catch((error: any) => {
-          console.error("Transaction submission failed:", error);
-          res.status(500).json({
-            error: `Transaction submission failed: ${error.message}`,
-            xdr: feeBumpXdr,
-            status: "ready",
-          });
+      try {
+        const result: any = await server.submitTransaction(feeBumpTx);
+        const response: FeeBumpResponse = {
+          xdr: feeBumpXdr,
+          status: "submitted",
+          hash: result.hash,
+        };
+        res.json(response);
+      } catch (error: any) {
+        console.error("Transaction submission failed:", error);
+        res.status(500).json({
+          error: `Transaction submission failed: ${error.message}`,
+          xdr: feeBumpXdr,
+          status: "ready",
         });
+      }
     } else {
       const response: FeeBumpResponse = {
         xdr: feeBumpXdr,

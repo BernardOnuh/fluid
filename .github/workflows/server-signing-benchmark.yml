@@ -1,0 +1,38 @@
+name: Server Signing Benchmark
+
+on:
+  push:
+    paths:
+      - ".github/workflows/server-signing-benchmark.yml"
+      - "server/**"
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run signing benchmark
+        run: npm run benchmark:signing
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-signing-benchmark-report
+          path: server/benchmarks/signing-report.md

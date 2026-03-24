@@ -21,6 +21,8 @@ const limiter = rateLimit({
   message: { error: "Too many requests from this IP, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
+});
+
 // CORS configuration with origin validation
 const corsOptions = {
   origin: (
@@ -60,9 +62,19 @@ app.get("/health", (req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
 
-app.post("/fee-bump", apiKeyMiddleware, apiKeyRateLimit, limiter, (req: Request, res: Response) => {
-  feeBumpHandler(req, res, config);
-});
+app.post(
+  "/fee-bump",
+  apiKeyMiddleware,
+  apiKeyRateLimit,
+  limiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await feeBumpHandler(req, res, config);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
