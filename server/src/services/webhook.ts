@@ -1,13 +1,12 @@
-import { Queue, Worker, Job } from "bullmq";
+import { Job, Queue, Worker } from "bullmq";
+import { createLogger, serializeError } from "../utils/logger";
+
 import Redis from "ioredis";
 import axios from "axios";
+import prisma from "../utils/db";
 
-// Prisma client generation may not run in all environments; use a dynamic require
-// to avoid compile-time type dependency on generated client types.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { PrismaClient } = require("@prisma/client") as { PrismaClient: any };
-const prisma = new PrismaClient();
 const connection = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+export const webhookLogger = createLogger({ component: "webhook_service" });
 
 export const webhookQueue = new Queue("webhook-delivery", {
   connection,
@@ -26,7 +25,7 @@ interface WebhookJobData {
 }
 
 export class WebhookService {
-  static async queueWebhook(tenantId: string, url: string, payload: any) {
+  static async queueWebhook (tenantId: string, url: string, payload: any) {
     const delivery = await prisma.webhookDelivery.create({
       data: {
         tenantId,
@@ -41,6 +40,73 @@ export class WebhookService {
     });
 
     return delivery;
+  }
+
+  async dispatch (
+    tenantId: string,
+    hash: string,
+    status: "success" | "failed"
+  ): Promise<void> {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, webhookUrl: true },
+    });
+
+    if (!tenant) {
+      webhookLogger.warn(
+        { tenant_id: tenantId, tx_hash: hash, status },
+        "Tenant not found for webhook dispatch"
+      );
+      return;
+    }
+
+    if (!tenant.webhookUrl) {
+      webhookLogger.debug(
+        { tenant_id: tenant.id, tx_hash: hash, status },
+        "Tenant has no webhook URL configured"
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(tenant.webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ hash, status }),
+      });
+
+      if (!response.ok) {
+        webhookLogger.error(
+          {
+            response_status: response.status,
+            status,
+            tenant_id: tenant.id,
+            tx_hash: hash,
+            webhook_url: tenant.webhookUrl,
+          },
+          "Webhook dispatch returned non-2xx response"
+        );
+        return;
+      }
+
+      webhookLogger.info(
+        { status, tenant_id: tenant.id, tx_hash: hash, webhook_url: tenant.webhookUrl },
+        "Webhook dispatched successfully"
+      );
+    } catch (error) {
+      webhookLogger.error(
+        {
+          ...serializeError(error),
+          status,
+          tenant_id: tenant.id,
+          tx_hash: hash,
+          webhook_url: tenant.webhookUrl,
+        },
+        "Network error during webhook dispatch"
+      );
+    }
   }
 }
 
@@ -57,8 +123,16 @@ export const startWebhookWorker = () => {
       if (!delivery) return;
 
       try {
-        console.log(`[Webhook] Attempting delivery ${deliveryId} (Attempt ${job.attemptsMade + 1}) to ${delivery.url}`);
-        
+        webhookLogger.info(
+          {
+            attempt: job.attemptsMade + 1,
+            delivery_id: deliveryId,
+            tenant_id: delivery.tenantId,
+            url: delivery.url,
+          },
+          "Attempting webhook delivery"
+        );
+
         await axios.post(delivery.url, delivery.payload, {
           timeout: 5000,
           headers: {
@@ -75,10 +149,23 @@ export const startWebhookWorker = () => {
           },
         });
 
-        console.log(`[Webhook] Delivery ${deliveryId} succeeded`);
+        webhookLogger.info(
+          { delivery_id: deliveryId, tenant_id: delivery.tenantId, url: delivery.url },
+          "Webhook delivery succeeded"
+        );
       } catch (error: any) {
         const errorMessage = error.response?.data || error.message;
-        console.error(`[Webhook] Delivery ${deliveryId} failed: ${errorMessage}`);
+        webhookLogger.error(
+          {
+            ...serializeError(error),
+            attempt: job.attemptsMade + 1,
+            delivery_id: deliveryId,
+            tenant_id: delivery.tenantId,
+            url: delivery.url,
+            webhook_error: errorMessage,
+          },
+          "Webhook delivery failed"
+        );
 
         await prisma.webhookDelivery.update({
           where: { id: deliveryId },
@@ -98,7 +185,15 @@ export const startWebhookWorker = () => {
 
   worker.on("failed", (job: Job<WebhookJobData> | undefined, err: Error) => {
     if (job && job.attemptsMade >= 5) {
-      console.error(`[Webhook] Delivery ${job.id} failed permanently after 5 attempts`);
+      webhookLogger.error(
+        {
+          ...serializeError(err),
+          attempts: job.attemptsMade,
+          delivery_id: job.data.deliveryId,
+          job_id: job.id,
+        },
+        "Webhook delivery failed permanently"
+      );
     }
   });
 

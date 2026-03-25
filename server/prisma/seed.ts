@@ -1,13 +1,17 @@
 import "dotenv/config";
-import { PrismaClient } from "@prisma/client";
+
+import { createLogger, serializeError } from "../src/utils/logger";
+
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaClient } from "@prisma/client";
 
 const dbUrl = process.env["DATABASE_URL"] ?? "file:./dev.db";
 const adapter = new PrismaBetterSqlite3({ url: dbUrl });
 const prisma = new PrismaClient({ adapter });
+const logger = createLogger({ component: "prisma_seed" });
 
-async function main() {
-  console.log("🌱 Seeding database with initial data...");
+async function main () {
+  logger.info("Seeding database with initial data");
 
   // Create test tenants with API keys
   const tenants = await Promise.all([
@@ -29,12 +33,15 @@ async function main() {
     }),
   ]);
 
-  console.log(`✅ Created ${tenants.length} test tenants:`);
-  tenants.forEach((tenant) => {
-    console.log(`   - ${tenant.name} (API Key: ${tenant.apiKey})`);
-  });
+  logger.info(
+    {
+      tenant_count: tenants.length,
+      tenants: tenants.map((tenant) => ({ api_key: tenant.apiKey, name: tenant.name })),
+    },
+    "Seeded test tenants"
+  );
 
-  console.log("\n✨ Seeding complete!");
+  logger.info("Seeding complete");
 }
 
 main()
@@ -42,7 +49,7 @@ main()
     await prisma.$disconnect();
   })
   .catch(async (e) => {
-    console.error("❌ Seeding failed:", e);
+    logger.error({ ...serializeError(e) }, "Seeding failed");
     await prisma.$disconnect();
     process.exit(1);
   });

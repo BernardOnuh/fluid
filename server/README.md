@@ -5,11 +5,13 @@ The Fluid server is a Node.js/TypeScript HTTP service that wraps signed Stellar 
 ## Quick Start
 
 1. Install dependencies:
+
 ```bash
 npm install
 ```
 
 2. Configure environment:
+
 ```bash
 cp .env.example .env
 ```
@@ -17,12 +19,14 @@ cp .env.example .env
 Edit `.env` and set `FLUID_FEE_PAYER_SECRET`.
 
 3. Build and run:
+
 ```bash
 npm run build
 npm start
 ```
 
 Or for development:
+
 ```bash
 npm run dev
 ```
@@ -32,13 +36,17 @@ npm run dev
 See `.env.example` for all configuration options.
 
 Required:
+
 - Fee payer key material:
   - Development-only fallback: `FLUID_FEE_PAYER_SECRET` (comma-separated Stellar secrets)
   - Production (recommended): HashiCorp Vault KV (see `docs/vault.md`)
 
 Optional:
+
 - `FLUID_BASE_FEE` - Base fee in stroops (default: 100)
 - `FLUID_FEE_MULTIPLIER` - Fee multiplier (default: 2.0)
+- `LOG_LEVEL` - Logger level: `debug`, `info`, `warn`, or `error` (default: `debug` in development, `info` in production)
+- `LOG_PRETTY` - Enable `pino-pretty` in non-production environments (default: `false`, which preserves JSON logs)
 - `STELLAR_NETWORK_PASSPHRASE` - Network passphrase (default: Testnet)
 - `STELLAR_HORIZON_URL` - Legacy single Horizon URL
 - `STELLAR_HORIZON_URLS` - Comma-separated Horizon URL list for failover
@@ -49,6 +57,7 @@ Optional:
 - `FLUID_ALLOWED_ORIGINS` - Comma-separated CORS allowlist; empty allows all origins
 
 Mock API keys for local development:
+
 - `fluid-free-demo-key` - Free tier, 2 requests per minute
 - `fluid-pro-demo-key` - Pro tier, 5 requests per minute
 
@@ -59,6 +68,7 @@ Mock API keys for local development:
 Health check endpoint.
 
 Response:
+
 ```json
 { "status": "ok" }
 ```
@@ -68,6 +78,7 @@ Response:
 Wraps a signed transaction in a fee-bump transaction.
 
 Request:
+
 ```json
 {
   "xdr": "<base64_encoded_signed_transaction_xdr>",
@@ -76,11 +87,13 @@ Request:
 ```
 
 Headers:
+
 ```http
 x-api-key: fluid-free-demo-key
 ```
 
 Response:
+
 ```json
 {
   "xdr": "<base64_encoded_fee_bump_transaction_xdr>",
@@ -145,6 +158,31 @@ npm start
 npm run watch
 npm run demo:horizon-failover
 ```
+
+## Logging
+
+The server uses `pino` as the primary logger. Logs are emitted as structured JSON by default so fields such as `level`, `tenant_id`, `tx_hash`, and `fee_payer` can be indexed by Datadog, ELK, or CloudWatch.
+
+Example JSON log:
+
+```json
+{
+  "level": "info",
+  "time": "2026-03-25T18:05:41.221Z",
+  "service": "fluid-server",
+  "env": "production",
+  "component": "fee_bump_handler",
+  "msg": "Fee bump transaction submitted successfully",
+  "tenant_id": "tenant_123",
+  "tx_hash": "3f1d9b...",
+  "fee_payer": "GABCD...",
+  "node_url": "https://horizon-testnet.stellar.org",
+  "submission_attempts": 1,
+  "final_fee_stroops": 200
+}
+```
+
+If you want human-readable logs locally, set `LOG_PRETTY=true` while keeping `NODE_ENV` outside production.
 
 ## Signing Benchmark
 

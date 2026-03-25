@@ -1,26 +1,26 @@
-import cors from "cors";
-import dotenv from "dotenv";
+import { createLogger, serializeError } from "./utils/logger";
 import express, { NextFunction, Request, Response } from "express";
-import rateLimit from "express-rate-limit";
-
-import { loadConfig } from "./config";
-import { AppError } from "./errors/AppError";
-import { feeBumpHandler } from "./handlers/feeBump";
 import {
   getHorizonFailoverClient,
   initializeHorizonFailoverClient,
 } from "./horizon/failoverClient";
-import { apiKeyMiddleware } from "./middleware/apiKeys";
-import { globalErrorHandler, notFoundHandler } from "./middleware/errorHandler";
-import { apiKeyRateLimit } from "./middleware/rateLimit";
-import { transactionStore } from "./workers/transactionStore";
 import {
   getLedgerMonitor,
   initializeLedgerMonitor,
 } from "./workers/ledgerMonitor";
+import { globalErrorHandler, notFoundHandler } from "./middleware/errorHandler";
 
-import { initializeLedgerMonitor } from "./workers/ledgerMonitor";
+import { AppError } from "./errors/AppError";
+import { apiKeyMiddleware } from "./middleware/apiKeys";
+import { apiKeyRateLimit } from "./middleware/rateLimit";
+import cors from "cors";
+import dotenv from "dotenv";
+import { feeBumpHandler } from "./handlers/feeBump";
+import { loadConfig } from "./config";
+import rateLimit from "express-rate-limit";
 import { transactionStore } from "./workers/transactionStore";
+
+const logger = createLogger({ component: "server" });
 
 dotenv.config();
 
@@ -112,14 +112,14 @@ app.post(
 );
 
 app.post("/test/add-transaction", (req: Request, res: Response) => {
-  const { hash, status = "pending" } = req.body;
+  const { hash, status = "pending", tenantId = "test-tenant" } = req.body;
 
   if (!hash) {
     res.status(400).json({ error: "Transaction hash is required" });
     return;
   }
 
-  transactionStore.addTransaction(hash, status);
+  transactionStore.addTransaction(hash, tenantId, status);
   res.json({ message: `Transaction ${hash} added with status ${status}` });
 });
 
@@ -138,25 +138,26 @@ if (config.horizonUrls.length > 0) {
   try {
     ledgerMonitor = initializeLedgerMonitor(config);
     ledgerMonitor.start();
-    console.log("Ledger monitor worker started");
+    logger.info("Ledger monitor worker started");
   } catch (error) {
-    console.error("Failed to start ledger monitor:", error);
+    logger.error({ ...serializeError(error) }, "Failed to start ledger monitor");
   }
 } else {
-  console.log("No Horizon URLs configured - ledger monitor disabled");
+  logger.info("No Horizon URLs configured; ledger monitor disabled");
 }
 
 // ✅ Start server
 app.listen(PORT, () => {
-  console.log(`Fluid server running on http://0.0.0.0:${PORT}`);
-  console.log(`Fee payers loaded: ${config.feePayerAccounts.length}`);
-  config.feePayerAccounts.forEach((account, index) => {
-    console.log(`  [${index + 1}] ${account.publicKey}`);
-  });
-  console.log(
-    `Horizon strategy: ${config.horizonSelectionStrategy} | nodes: ${config.horizonUrls.length}`
+  logger.info(
+    {
+      fee_payers_loaded: config.feePayerAccounts.length,
+      fee_payer_public_keys: config.feePayerAccounts.map((account) => account.publicKey),
+      horizon_node_count: config.horizonUrls.length,
+      horizon_nodes: config.horizonUrls,
+      horizon_selection_strategy: config.horizonSelectionStrategy,
+      port: PORT,
+      url: `http://0.0.0.0:${PORT}`,
+    },
+    "Fluid server started"
   );
-  config.horizonUrls.forEach((url, index) => {
-    console.log(`  [${index + 1}] ${url}`);
-  });
 });

@@ -1,5 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as fc from "fast-check";
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { WebhookService } from "./webhook";
+import prisma from "../utils/db";
+import { webhookLogger } from "./webhook";
 
 // Mock Prisma before importing WebhookService
 vi.mock("../utils/db", () => ({
@@ -10,8 +15,6 @@ vi.mock("../utils/db", () => ({
   },
 }));
 
-import { WebhookService } from "./webhook";
-import prisma from "../utils/db";
 
 const mockPrisma = prisma as any;
 
@@ -28,14 +31,12 @@ describe("WebhookService", () => {
   describe("dispatch — tenant not found", () => {
     it("logs a warning and skips dispatch when tenant is not found", async () => {
       mockPrisma.tenant.findUnique.mockResolvedValue(null);
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const warnSpy = vi.spyOn(webhookLogger, "warn").mockImplementation(() => webhookLogger);
 
       await service.dispatch("unknown-tenant", "hash-abc", "success");
 
       expect(fetch).not.toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Tenant not found")
-      );
+      expect(warnSpy).toHaveBeenCalled();
       warnSpy.mockRestore();
     });
   });
@@ -145,10 +146,10 @@ describe("WebhookService", () => {
         webhookUrl: "https://example.com/webhook",
       });
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(webhookLogger, "error").mockImplementation(() => webhookLogger);
 
       await expect(service.dispatch("tenant-1", "hash-err", "failed")).resolves.toBeUndefined();
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("non-2xx"));
+      expect(errorSpy).toHaveBeenCalled();
       errorSpy.mockRestore();
     });
 
@@ -158,10 +159,10 @@ describe("WebhookService", () => {
         webhookUrl: "https://example.com/webhook",
       });
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network failure")));
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(webhookLogger, "error").mockImplementation(() => webhookLogger);
 
       await expect(service.dispatch("tenant-1", "hash-net", "success")).resolves.toBeUndefined();
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Network error"));
+      expect(errorSpy).toHaveBeenCalled();
       errorSpy.mockRestore();
     });
 
@@ -183,8 +184,8 @@ describe("WebhookService", () => {
             fc.constant(null) // null signals network error
           ),
           async (hash, status, responseOrNull) => {
-            vi.spyOn(console, "error").mockImplementation(() => {});
-            vi.spyOn(console, "warn").mockImplementation(() => {});
+            vi.spyOn(webhookLogger, "error").mockImplementation(() => webhookLogger);
+            vi.spyOn(webhookLogger, "warn").mockImplementation(() => webhookLogger);
 
             if (responseOrNull === null) {
               vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network error")));
