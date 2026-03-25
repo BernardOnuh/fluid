@@ -1,8 +1,11 @@
 import { Queue, Worker, Job } from "bullmq";
 import Redis from "ioredis";
-import { PrismaClient } from "@prisma/client";
 import axios from "axios";
 
+// Prisma client generation may not run in all environments; use a dynamic require
+// to avoid compile-time type dependency on generated client types.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { PrismaClient } = require("@prisma/client") as { PrismaClient: any };
 const prisma = new PrismaClient();
 const connection = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 
@@ -93,7 +96,7 @@ export const startWebhookWorker = () => {
     { connection }
   );
 
-  worker.on("failed", (job, err) => {
+  worker.on("failed", (job: Job<WebhookJobData> | undefined, err: Error) => {
     if (job && job.attemptsMade >= 5) {
       console.error(`[Webhook] Delivery ${job.id} failed permanently after 5 attempts`);
     }

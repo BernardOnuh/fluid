@@ -1,4 +1,7 @@
 import { performance } from "perf_hooks";
+import * as os from "os";
+import * as fs from "fs";
+import { nativeSigner } from "../signing/native";
 
 interface BenchmarkConfig {
   name: string;

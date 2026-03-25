@@ -1,5 +1,5 @@
-import StellarSdk from "@stellar/stellar-sdk";
 import { NextFunction, Request, Response } from "express";
+import StellarSdk from "@stellar/stellar-sdk";
 import { Config, pickFeePayerAccount } from "../config";
 import { AppError } from "../errors/AppError";
 import { ApiKeyConfig } from "../middleware/apiKeys";
@@ -8,7 +8,9 @@ import { recordSponsoredTransaction } from "../models/transactionLedger";
 import { FeeBumpRequest, FeeBumpSchema } from "../schemas/feeBump";
 import { checkTenantDailyQuota } from "../services/quota";
 import { transactionStore } from "../workers/transactionStore";
+
 import { calculateFeeBumpFee } from "../utils/feeCalculator";
+import { signTransaction, signTransactionWithVault } from "../signing";
 
 interface FeeBumpResponse {
   xdr: string;
@@ -25,12 +27,12 @@ export async function feeBumpHandler(
 ): Promise<void> {
   try {
     const result = FeeBumpSchema.safeParse(req.body);
-
     if (!result.success) {
       console.warn(
         "Validation failed for fee-bump request:",
         result.error.format(),
       );
+
       return next(
         new AppError(
           `Validation failed: ${JSON.stringify(result.error.format())}`,
@@ -40,40 +42,19 @@ export async function feeBumpHandler(
       );
     }
 
-    const body: FeeBumpRequest = req.body;
-    if (!body.xdr) {
-      return next(
-        new AppError("Missing 'xdr' field in request body", 400, "INVALID_XDR"),
-      );
-    }
-
-    // Safety check: Reject XDR payloads exceeding the size limit (DoS protection)
-    const xdrSize = body.xdr.length;
-    if (xdrSize > config.maxXdrSize) {
-      console.warn(
-        `XDR payload too large: ${xdrSize} bytes (max: ${config.maxXdrSize})`,
-      );
-      return next(
-        new AppError(
-          `XDR payload exceeds maximum allowed size of ${config.maxXdrSize} characters`,
-          413,
-          "PAYLOAD_TOO_LARGE",
-        ),
-      );
-    }
+    const body: FeeBumpRequest = result.data;
 
     // Pick a fee payer account using Round Robin
     const feePayerAccount = pickFeePayerAccount(config);
     console.log(
-      `Received fee-bump request | fee_payer: ${feePayerAccount.publicKey}`,
+      `Received fee-bump request | fee_payer: ${feePayerAccount.publicKey}`
     );
 
     let innerTransaction: any;
-
     try {
       innerTransaction = StellarSdk.TransactionBuilder.fromXDR(
         body.xdr,
-        config.networkPassphrase,
+        config.networkPassphrase
       );
     } catch (error: any) {
       console.error("Failed to parse XDR:", error.message);
@@ -123,10 +104,19 @@ export async function feeBumpHandler(
     const baseFeeAmount = Math.floor(config.baseFee * config.feeMultiplier);
 
     // Use extracted utility for correct fee calculation
+    const apiKeyConfig = res.locals.apiKey as ApiKeyConfig | undefined;
+    if (!apiKeyConfig) {
+      res.status(500).json({
+        error: "Missing tenant context for fee sponsorship",
+      });
+      return;
+    }
+    // Extract operation count safely
+    const operationCount = innerTransaction.operations?.length || 0;
     const feeAmount = calculateFeeBumpFee(
       operationCount,
       config.baseFee,
-      config.feeMultiplier,
+      config.feeMultiplier
     );
 
     console.log("Fee calculation:", {
@@ -136,45 +126,45 @@ export async function feeBumpHandler(
       finalFee: feeAmount,
     });
 
-    const apiKeyConfig = res.locals.apiKey as ApiKeyConfig | undefined;
-
-    if (!apiKeyConfig) {
-      res.status(500).json({
-        error: "Missing tenant context for fee sponsorship",
-      });
-      return;
-    }
-
     const tenant = syncTenantFromApiKey(apiKeyConfig);
-    const quotaCheck = checkTenantDailyQuota(tenant, baseFeeAmount);
-
+    const quotaCheck = checkTenantDailyQuota(tenant, feeAmount);
     if (!quotaCheck.allowed) {
       res.status(403).json({
         error: "Daily fee sponsorship quota exceeded",
         currentSpendStroops: quotaCheck.currentSpendStroops,
-        attemptedFeeStroops: baseFeeAmount,
+        attemptedFeeStroops: feeAmount,
         dailyQuotaStroops: quotaCheck.dailyQuotaStroops,
       });
       return;
     }
 
-    const feePayerKeypair = StellarSdk.Keypair.fromSecret(
-      feePayerAccount.secret,
-    );
-
     const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
       feePayerAccount.keypair,
       feeAmount,
       innerTransaction,
-      config.networkPassphrase,
+      config.networkPassphrase
     );
 
-    feeBumpTx.sign(feePayerKeypair);
+    if (feePayerAccount.secretSource.type === "env") {
+      await signTransaction(feeBumpTx, feePayerAccount.secretSource.secret);
+    } else {
+      if (!config.vault) {
+        throw new Error("Vault config missing for vault-backed fee payer signing");
+      }
+
+      await signTransactionWithVault(
+        feeBumpTx,
+        feePayerAccount.publicKey,
+        config.vault,
+        feePayerAccount.secretSource.secretPath
+      );
+    }
+
     recordSponsoredTransaction(tenant.id, feeAmount);
 
     const feeBumpXdr = feeBumpTx.toXDR();
     console.log(
-      `Fee-bump transaction created | fee_payer: ${feePayerAccount.publicKey}`,
+      `Fee-bump transaction created | fee_payer: ${feePayerAccount.publicKey}`
     );
 
     const submit = body.submit || false;
@@ -186,7 +176,6 @@ export async function feeBumpHandler(
       server
         .submitTransaction(feeBumpTx)
         .then((result: any) => {
-          // Track the submitted transaction
           transactionStore.addTransaction(result.hash, "submitted");
 
           const response: FeeBumpResponse = {
@@ -207,15 +196,16 @@ export async function feeBumpHandler(
             ),
           );
         });
-    } else {
-      const response: FeeBumpResponse = {
-        xdr: feeBumpXdr,
-        status,
-        fee_payer: feePayerAccount.publicKey,
-      };
-
-      res.json(response);
+      return;
+      return;
     }
+
+    const response: FeeBumpResponse = {
+      xdr: feeBumpXdr,
+      status,
+      fee_payer: feePayerAccount.publicKey,
+    };
+    res.json(response);
   } catch (error: any) {
     console.error("Error processing fee-bump request:", error);
     next(error);

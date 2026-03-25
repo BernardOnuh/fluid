@@ -24,8 +24,8 @@ const config = loadConfig();
 
 // Rate limiter
 const limiter = rateLimit({
-  windowMs: 60000,
-  max: 100,
+  windowMs: config.rateLimitWindowMs,
+  max: config.rateLimitMax,
   message: {
     error: "Too many requests from this IP, please try again later.",
     code: "RATE_LIMITED",
@@ -40,8 +40,20 @@ const corsOptions = {
     origin: string | undefined,
     callback: (err: Error | null, allow?: boolean) => void,
   ) => {
-    // Allow all origins (tighten in production)
-    callback(null, true);
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) {
+      callback(null, false);
+      return;
+    }
+
+    // Check if the origin is in the allowed list
+    if (config.allowedOrigins.includes("*") || config.allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    // Reject the request - pass error to trigger error handler
+    callback(new Error("Origin not allowed by CORS"), false);
   },
   credentials: true,
 };
