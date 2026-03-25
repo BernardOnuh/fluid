@@ -1,6 +1,7 @@
-import { Request, Response } from "express";
+import { Request, Response, NextFunction } from "express";
 import StellarSdk from "@stellar/stellar-sdk";
-import { Config, pickFeePayerAccount } from "../config";
+import { transactionStore } from "../workers/transactionStore";
+import { AppError } from "../errors/AppError";
 
 interface FeeBumpRequest {
   xdr: string;
@@ -18,13 +19,30 @@ interface FeeBumpResponse {
 export function feeBumpHandler(
   req: Request,
   res: Response,
+  next: NextFunction,
   config: Config
 ): void {
   try {
-    const body: FeeBumpRequest = req.body;
-    if (!body.xdr) {
-      res.status(400).json({ error: "Missing 'xdr' field in request body" });
-      return;
+    const result = FeeBumpSchema.safeParse(req.body);
+
+    if (!result.success) {
+      console.warn(
+        "Validation failed for fee-bump request:",
+        result.error.format()
+      );
+      return next(
+        new AppError(
+          `Validation failed: ${JSON.stringify(result.error.format())}`,
+          400,
+          "INVALID_XDR"
+        )
+      );
+      
+      const body: FeeBumpRequest = req.body;
+      if (!body.xdr) {
+        res.status(400).json({ error: "Missing 'xdr' field in request body" });
+        return;
+      }
     }
 
     // Pick a fee payer account using Round Robin
@@ -35,36 +53,46 @@ export function feeBumpHandler(
     try {
       innerTransaction = StellarSdk.TransactionBuilder.fromXDR(
         body.xdr,
-        config.networkPassphrase
+        config.networkPassphrase,
       );
     } catch (error: any) {
       console.error("Failed to parse XDR:", error.message);
-      res.status(400).json({
-        error: `Invalid XDR: ${error.message}`,
-      });
-      return;
+      return next(
+        new AppError(`Invalid XDR: ${error.message}`, 400, "INVALID_XDR")
+      );
     }
 
     if (innerTransaction.signatures.length === 0) {
-      res.status(400).json({
-        error: "Inner transaction must be signed before fee-bumping",
-      });
-      return;
+      return next(
+        new AppError(
+          "Inner transaction must be signed before fee-bumping",
+          400,
+          "UNSIGNED_TRANSACTION"
+        )
+      );
     }
 
     if ("feeBumpTransaction" in innerTransaction) {
-      res.status(400).json({
-        error: "Cannot fee-bump an already fee-bumped transaction",
-      });
-      return;
+      return next(
+        new AppError(
+          "Cannot fee-bump an already fee-bumped transaction",
+          400,
+          "ALREADY_FEE_BUMPED"
+        )
+      );
     }
 
     const feeAmount = Math.floor(config.baseFee * config.feeMultiplier);
+
+    const feePayerKeypair = StellarSdk.Keypair.fromSecret(
+      config.feePayerSecret,
+    );
+
     const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
       feePayerAccount.keypair,
       feeAmount,
       innerTransaction,
-      config.networkPassphrase
+      config.networkPassphrase,
     );
     feeBumpTx.sign(feePayerAccount.keypair);
 
@@ -79,6 +107,9 @@ export function feeBumpHandler(
       server
         .submitTransaction(feeBumpTx)
         .then((result: any) => {
+          // Track the submitted transaction
+          transactionStore.addTransaction(result.hash, "submitted");
+
           const response: FeeBumpResponse = {
             xdr: feeBumpXdr,
             status: "submitted",
@@ -89,12 +120,13 @@ export function feeBumpHandler(
         })
         .catch((error: any) => {
           console.error("Transaction submission failed:", error);
-          res.status(500).json({
-            error: `Transaction submission failed: ${error.message}`,
-            xdr: feeBumpXdr,
-            status: "ready",
-            fee_payer: feePayerAccount.publicKey,
-          });
+          next(
+            new AppError(
+              `Transaction submission failed: ${error.message}`,
+              500,
+              "SUBMISSION_FAILED"
+            )
+          );
         });
     } else {
       const response: FeeBumpResponse = {
@@ -106,8 +138,6 @@ export function feeBumpHandler(
     }
   } catch (error: any) {
     console.error("Error processing fee-bump request:", error);
-    res.status(500).json({
-      error: `Internal server error: ${error.message}`,
-    });
+    next(error);
   }
 }
