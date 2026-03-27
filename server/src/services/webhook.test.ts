@@ -46,6 +46,7 @@ describe("WebhookService", () => {
       mockPrisma.tenant.findUnique.mockResolvedValue({
         id: "tenant-1",
         webhookUrl: null,
+        webhookEventTypes: null,
       });
 
       await service.dispatch("tenant-1", "hash-abc", "success");
@@ -73,6 +74,7 @@ describe("WebhookService", () => {
             mockPrisma.tenant.findUnique.mockResolvedValue({
               id: "tenant-null",
               webhookUrl: null,
+              webhookEventTypes: null,
             });
 
             await service.dispatch("tenant-null", hash, status);
@@ -90,6 +92,7 @@ describe("WebhookService", () => {
       mockPrisma.tenant.findUnique.mockResolvedValue({
         id: "tenant-1",
         webhookUrl: "https://example.com/webhook",
+        webhookEventTypes: null,
       });
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal("fetch", mockFetch);
@@ -102,7 +105,11 @@ describe("WebhookService", () => {
       expect(options.method).toBe("POST");
       expect(options.headers["Content-Type"]).toBe("application/json");
       const body = JSON.parse(options.body);
-      expect(body).toEqual({ hash: "hash-xyz", status: "success" });
+      expect(body).toEqual({
+        eventType: "tx.success",
+        hash: "hash-xyz",
+        status: "success",
+      });
     });
 
     /**
@@ -125,17 +132,53 @@ describe("WebhookService", () => {
             mockPrisma.tenant.findUnique.mockResolvedValue({
               id: "tenant-1",
               webhookUrl: "https://example.com/hook",
+              webhookEventTypes: null,
             });
 
             await service.dispatch("tenant-1", hash, status);
 
             if (mockFetch.mock.calls.length !== 1) return false;
             const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-            return body.hash === hash && body.status === status && Object.keys(body).length === 2;
+            return (
+              body.hash === hash &&
+              body.status === status &&
+              body.eventType === (status === "success" ? "tx.success" : "tx.failed") &&
+              Object.keys(body).length === 3
+            );
           }
         ),
         { numRuns: 100 }
       );
+    });
+
+    it("defaults to all event types when no explicit filter is configured", async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue({
+        id: "tenant-default",
+        webhookUrl: "https://example.com/webhook",
+        webhookEventTypes: null,
+      });
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await service.dispatch("tenant-default", "hash-default", "failed");
+
+      expect(mockFetch).toHaveBeenCalledOnce();
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.eventType).toBe("tx.failed");
+    });
+
+    it("skips dispatch when the tenant disables the event type", async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue({
+        id: "tenant-filtered",
+        webhookUrl: "https://example.com/webhook",
+        webhookEventTypes: JSON.stringify(["tx.failed"]),
+      });
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await service.dispatch("tenant-filtered", "hash-filtered", "success");
+
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
@@ -144,6 +187,7 @@ describe("WebhookService", () => {
       mockPrisma.tenant.findUnique.mockResolvedValue({
         id: "tenant-1",
         webhookUrl: "https://example.com/webhook",
+        webhookEventTypes: null,
       });
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
       const errorSpy = vi.spyOn(webhookLogger, "error").mockImplementation(() => webhookLogger);
@@ -157,6 +201,7 @@ describe("WebhookService", () => {
       mockPrisma.tenant.findUnique.mockResolvedValue({
         id: "tenant-1",
         webhookUrl: "https://example.com/webhook",
+        webhookEventTypes: null,
       });
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network failure")));
       const errorSpy = vi.spyOn(webhookLogger, "error").mockImplementation(() => webhookLogger);
@@ -196,6 +241,7 @@ describe("WebhookService", () => {
             mockPrisma.tenant.findUnique.mockResolvedValue({
               id: "tenant-1",
               webhookUrl: "https://example.com/hook",
+              webhookEventTypes: null,
             });
 
             // Should never throw

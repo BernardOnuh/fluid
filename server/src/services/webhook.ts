@@ -4,6 +4,10 @@ import { createLogger, serializeError } from "../utils/logger";
 import Redis from "ioredis";
 import axios from "axios";
 import prisma from "../utils/db";
+import {
+  deserializeWebhookEventTypes,
+  mapTransactionStatusToWebhookEventType,
+} from "./webhookEventTypes";
 
 const connection = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 export const webhookLogger = createLogger({ component: "webhook_service" });
@@ -47,9 +51,10 @@ export class WebhookService {
     hash: string,
     status: "success" | "failed"
   ): Promise<void> {
+    const eventType = mapTransactionStatusToWebhookEventType(status);
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, webhookUrl: true },
+      select: { id: true, webhookUrl: true, webhookEventTypes: true },
     });
 
     if (!tenant) {
@@ -68,13 +73,27 @@ export class WebhookService {
       return;
     }
 
+    const enabledEventTypes = deserializeWebhookEventTypes(tenant.webhookEventTypes);
+    if (!enabledEventTypes.includes(eventType)) {
+      webhookLogger.debug(
+        {
+          enabled_event_types: enabledEventTypes,
+          event_type: eventType,
+          tenant_id: tenant.id,
+          tx_hash: hash,
+        },
+        "Webhook event filtered out for tenant"
+      );
+      return;
+    }
+
     try {
       const response = await fetch(tenant.webhookUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ hash, status }),
+        body: JSON.stringify({ eventType, hash, status }),
       });
 
       if (!response.ok) {

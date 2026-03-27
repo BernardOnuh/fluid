@@ -15,6 +15,7 @@ model Tenant {
   dailyQuotaStroops  BigInt            @default(1000000) // 0.1 XLM default
   totalCredit        BigInt            @default(0) // Total purchased credit
   webhookUrl         String?
+  webhookEventTypes  String?
   apiKeys            ApiKey[]
   webhookDeliveries  WebhookDelivery[]
   quotaTopUps QuotaTopUp[]
