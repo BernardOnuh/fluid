@@ -42,7 +42,7 @@ model WebhookDelivery {
   tenantId    String
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   url         String
-  payload     Json
+  payload     String
   status      String   @default("pending") // pending, success, failed
   retryCount  Int      @default(0)
   lastError   String?
@@ -54,6 +54,24 @@ model WebhookDelivery {
   @@index([tenantId])
 }
 
+model SupportedAsset {
+  id         String   @id @default(uuid())
+  code       String
+  issuer     String?
+  minBalance String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([code, issuer])
+}
+
+model SponsoredTransaction {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  feeStroops BigInt
+  createdAt  DateTime @default(now())
+}
 model SignerSecret {
   id                String   @id @default(uuid())
   publicKey         String   @unique

@@ -24,6 +24,12 @@ export interface VaultConfig {
   secretField: string;
 }
 
+export interface SupportedAsset {
+  code: string;
+  issuer?: string;
+  minBalance?: string;
+}
+
 export interface Config {
   feePayerAccounts: FeePayerAccount[];
   signerPool: SignerPool;
@@ -37,6 +43,13 @@ export interface Config {
   rateLimitMax: number;
   allowedOrigins: string[];
   alerting: AlertingConfig;
+  supportedAssets: SupportedAsset[];
+  maxXdrSize: number;
+  maxOperations: number;
+  horizonSelectionStrategy: HorizonSelectionStrategy;
+  horizonUrls: string[];
+  stellarRpcUrl?: string;
+  vault?: VaultConfig;
 }
 
 export interface AlertEmailConfig {
@@ -179,6 +192,8 @@ export function loadConfig(): Config {
   const slackWebhookUrl = process.env.FLUID_ALERT_SLACK_WEBHOOK_URL?.trim() || undefined;
   const email = loadAlertEmailConfig();
 
+  const supportedAssets = parseSupportedAssets(process.env.FLUID_SUPPORTED_ASSETS);
+
   
   const sharedConfig = {
     allowedOrigins,
@@ -194,6 +209,7 @@ export function loadConfig(): Config {
     rateLimitWindowMs,
     stellarRpcUrl: process.env.STELLAR_RPC_URL,
     vault,
+    supportedAssets,
   };
   
   const vaultSecretPaths = parseCommaSeparatedList(process.env.FLUID_FEE_PAYER_VAULT_SECRET_PATHS);
@@ -208,21 +224,34 @@ export function loadConfig(): Config {
       );
     }
 
-    feePayerAccounts = vaultPublicKeys.map((publicKey, index) => ({
-      publicKey,
-      keypair: StellarSdk.Keypair.fromPublicKey(publicKey),
-      secretSource: {
-        type: "vault",
-        secretPath: vaultSecretPaths[index],
-      },
-    }));
-  } else {
-    const secrets = parseCommaSeparatedList(process.env.FLUID_FEE_PAYER_SECRET);
-    if (secrets.length === 0) {
-      throw new Error(
-        "No fee payer secrets configured. Provide either Vault settings or FLUID_FEE_PAYER_SECRET for local development.",
-      );
-    }
+    const feePayerAccounts: FeePayerAccount[] = vaultPublicKeys.map(
+      (publicKey, index) => ({
+        publicKey,
+        keypair: StellarSdk.Keypair.fromPublicKey(publicKey),
+        secretSource: {
+          type: "vault",
+          secretPath: vaultSecretPaths[index],
+        },
+      })
+    );
+
+    const signerPool = new SignerPool(
+      feePayerAccounts.map((account) => ({
+        keypair: account.keypair,
+        secret:
+          account.secretSource.type === "vault"
+            ? `vault:${account.secretSource.secretPath}`
+            : account.secretSource.secret,
+      }))
+    );
+
+    return {
+      ...sharedConfig,
+      feePayerAccounts,
+      signerPool,
+      alerting: loadAlertingConfig(),
+    };
+  }
 
     feePayerAccounts = secrets.map((secret) => {
       const keypair = StellarSdk.Keypair.fromSecret(secret);
@@ -234,35 +263,50 @@ export function loadConfig(): Config {
     });
   }
 
-  const signerPool = new SignerPool(
-    feePayerAccounts.map((account) => ({
-      keypair: account.keypair,
-      secret:
-        account.secretSource.type === "vault"
-          ? `vault:${account.secretSource.secretPath}`
-          : account.secretSource.type === "env"
-            ? account.secretSource.secret
-            : "",
-    })),
+  const feePayerAccounts: FeePayerAccount[] = secrets.map((secret) => {
+    const keypair = StellarSdk.Keypair.fromSecret(secret);
+
+    return {
+      publicKey: keypair.publicKey(),
+      keypair,
+      secretSource: { type: "env", secret },
+    };
+  });
+
+  const lowBalanceThresholdXlm = parseOptionalNumber(
+    process.env.FLUID_LOW_BALANCE_THRESHOLD_XLM,
+  );
+  const checkIntervalMs = parsePositiveInt(
+    process.env.FLUID_LOW_BALANCE_CHECK_INTERVAL_MS,
+    60 * 60 * 1000,
+  );
+  const cooldownMs = parsePositiveInt(
+    process.env.FLUID_LOW_BALANCE_ALERT_COOLDOWN_MS,
+    6 * 60 * 60 * 1000,
   );
 
   return {
-    feePayerAccounts,
-    signerPool,
-    baseFee,
-    feeMultiplier: Number.isFinite(feeMultiplier) ? feeMultiplier : 2,
-    networkPassphrase,
-    horizonUrl: horizonUrls[0],
-    horizonUrls,
-    horizonSelectionStrategy,
-    rateLimitWindowMs,
-    rateLimitMax,
-    allowedOrigins,
-    maxXdrSize,
-    maxOperations,
-    stellarRpcUrl: process.env.STELLAR_RPC_URL?.trim() || undefined,
-    vault,
-    alerting: {
+      feePayerAccounts,
+      signerPool: new SignerPool(
+        feePayerAccounts.map((account) => ({
+          keypair: account.keypair,
+          secret: account.secretSource.type === "env" ? account.secretSource.secret : "",
+        }))
+      ),
+      baseFee,
+      feeMultiplier: Number.isFinite(feeMultiplier) ? feeMultiplier : 2,
+      networkPassphrase,
+      horizonUrl: horizonUrls[0],
+      horizonUrls,
+      horizonSelectionStrategy,
+      rateLimitWindowMs,
+      rateLimitMax,
+      allowedOrigins,
+      maxXdrSize,
+      maxOperations,
+      stellarRpcUrl: process.env.STELLAR_RPC_URL?.trim() || undefined,
+      vault,
+      alerting: {
       lowBalanceThresholdXlm,
       checkIntervalMs,
       cooldownMs,
@@ -272,6 +316,37 @@ export function loadConfig(): Config {
   };
 }
 
+function loadAlertingConfig(): AlertingConfig {
+  const lowBalanceThresholdXlm = parseOptionalNumber(
+    process.env.FLUID_LOW_BALANCE_THRESHOLD_XLM,
+  );
+  const checkIntervalMs = parsePositiveInt(
+    process.env.FLUID_LOW_BALANCE_CHECK_INTERVAL_MS,
+    60 * 60 * 1000,
+  );
+  const cooldownMs = parsePositiveInt(
+    process.env.FLUID_LOW_BALANCE_ALERT_COOLDOWN_MS,
+    6 * 60 * 60 * 1000,
+  );
+  const slackWebhookUrl = process.env.FLUID_ALERT_SLACK_WEBHOOK_URL?.trim();
+  const email = loadAlertEmailConfig();
+
+  return {
+    lowBalanceThresholdXlm,
+    checkIntervalMs,
+    cooldownMs,
+    slackWebhookUrl: slackWebhookUrl || undefined,
+    email,
+  };
+}
+
+function loadAlertEmailConfig(): AlertEmailConfig | undefined {
+  const host = process.env.FLUID_ALERT_SMTP_HOST?.trim();
+  const from = process.env.FLUID_ALERT_EMAIL_FROM?.trim();
+  const to = process.env.FLUID_ALERT_EMAIL_TO
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 let rrIndex = 0;
 
 export function pickFeePayerAccount(config: Config): FeePayerAccount {
@@ -342,4 +417,59 @@ export function pickFeePayerAccount (config: Config): FeePayerAccount {
   }
 
   return account;
+}
+
+function parseCommaSeparatedList (value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function loadVaultConfig (): VaultConfig | undefined {
+  const addr = process.env.VAULT_ADDR?.trim();
+  const kvMount = process.env.VAULT_KV_MOUNT?.trim() || "secret";
+  const kvVersionStr = process.env.VAULT_KV_VERSION?.trim() || "2";
+
+  if (!addr) {
+    return undefined;
+  }
+
+  return {
+    addr,
+    kvMount,
+    kvVersion: kvVersionStr === "1" ? 1 : 2,
+    secretField: process.env.VAULT_SECRET_FIELD?.trim() || "secret",
+    token: process.env.VAULT_TOKEN?.trim(),
+    appRole: process.env.VAULT_ROLE_ID && process.env.VAULT_SECRET_ID
+      ? {
+        roleId: process.env.VAULT_ROLE_ID,
+        secretId: process.env.VAULT_SECRET_ID,
+      }
+      : undefined,
+  };
+}
+
+function parseSupportedAssets (value: string | undefined): SupportedAsset[] {
+  if (!value) {
+    return [];
+  }
+
+  // Expect entry format: CODE:ISSUER:MIN_BALANCE (ISSUER and MIN_BALANCE are optional)
+  return parseCommaSeparatedList(value).map((entry) => {
+    const parts = entry.split(":").map((p) => p.trim());
+    const code = parts[0];
+    const issuer = parts[1];
+    const minBalance = parts[2];
+
+    return {
+      code,
+      issuer: issuer || undefined,
+      minBalance: minBalance || undefined,
+    };
+  });
 }
