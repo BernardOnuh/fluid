@@ -220,6 +220,7 @@ export class FluidClient {
     };
   }
 
+  
   async submitFeeBumpTransaction(feeBumpXdr: string): Promise<any> {
     if (!this.horizonServer) {
       throw new Error("Horizon URL not configured");

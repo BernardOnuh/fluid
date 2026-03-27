@@ -275,23 +275,50 @@ async function bootstrap(): Promise<void> {
   });
 }
 
-let balanceMonitor: any = null;
-if (
-  config.horizonUrl &&
-  config.alerting.lowBalanceThresholdXlm !== undefined &&
-  alertService.isEnabled()
-) {
-  try {
-    balanceMonitor = initializeBalanceMonitor(config, alertService);
-    balanceMonitor.start();
-    console.log("Balance monitor worker started");
-  } catch (error) {
-    console.error("Failed to start balance monitor:", error);
+  if (config.horizonUrls.length > 0) {
+    try {
+      const ledgerMonitor = initializeLedgerMonitor(config);
+      ledgerMonitor.start();
+      logger.info("Ledger monitor worker started");
+    } catch (error) {
+      logger.error({ ...serializeError(error) }, "Failed to start ledger monitor");
+    }
+  } else {
+    logger.info("No Horizon URLs configured; ledger monitor disabled");
   }
-} else {
-  console.log(
-    "Low balance alerting disabled - missing Horizon URL, threshold, or alert transport",
-  );
+
+  if (
+    config.horizonUrl &&
+    config.alerting.lowBalanceThresholdXlm !== undefined &&
+    alertService.isEnabled()
+  ) {
+    try {
+      const balanceMonitor = initializeBalanceMonitor(config, alertService);
+      balanceMonitor.start();
+      logger.info("Balance monitor worker started");
+    } catch (error) {
+      logger.error({ ...serializeError(error) }, "Failed to start balance monitor");
+    }
+  } else {
+    logger.info(
+      "Low balance alerting disabled - missing Horizon URL, threshold, or alert transport",
+    );
+  }
+
+  app.listen(PORT, () => {
+    logger.info(
+      {
+        fee_payers_loaded: config.feePayerAccounts.length,
+        fee_payer_public_keys: config.feePayerAccounts.map((account) => account.publicKey),
+        horizon_node_count: config.horizonUrls.length,
+        horizon_nodes: config.horizonUrls,
+        horizon_selection_strategy: config.horizonSelectionStrategy,
+        port: PORT,
+        url: `http://0.0.0.0:${PORT}`,
+      },
+      "Fluid server started",
+    );
+  });
 }
 
 app.listen(PORT, () => {

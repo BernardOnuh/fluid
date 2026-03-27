@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@stellar/freighter-api": "^6.0.1",
+    "@stellar/stellar-sdk": "^14.6.1",
     "@tanstack/react-table": "^8.21.3",
     "bcryptjs": "^2.4.3",
     "lucide-react": "^1.7.0",
