@@ -32,6 +32,7 @@ model Tenant {
   webhookEventTypes  String?
   apiKeys                ApiKey[]
   webhookDeliveries      WebhookDelivery[]
+  webhookDlqEntries      WebhookDlq[]
   quotaTopUps            QuotaTopUp[]
   payments               Payment[]
   sponsoredTransactions  SponsoredTransaction[]
@@ -77,6 +78,23 @@ model WebhookDelivery {
 
   @@index([status])
   @@index([tenantId])
+}
+
+model WebhookDlq {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  deliveryId     String
+  url            String
+  payload        String
+  lastError      String?
+  retryCount     Int
+  failedAt       DateTime @default(now())
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([expiresAt])
 }
 
 model QuotaTopUp {
@@ -178,4 +196,19 @@ model Transaction {
   @@index([tenantId])
   @@index([status])
   @@index([txHash])
+}
+
+// In-dashboard notification centre — persisted alerts for logged-in admins.
+model AdminNotification {
+  id        String   @id @default(uuid())
+  type      String   // "low_balance" | "incident" | "info" | "warning" | "critical"
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  metadata  String?  // JSON blob for extra context (e.g. publicKey, balanceXlm)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([read])
+  @@index([createdAt])
 }

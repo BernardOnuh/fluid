@@ -33,6 +33,12 @@ export default async function AdminWebhooksPage() {
                 </div>
               </div>
               <Link
+                href="/admin/webhooks/dlq"
+                className="inline-flex min-h-10 items-center justify-center rounded-full border border-sky-300 bg-sky-50 px-4 text-sm font-semibold text-sky-700 transition hover:border-sky-400 hover:bg-sky-100"
+              >
+                Dead-Letter Queue
+              </Link>
+              <Link
                 href="/admin/dashboard"
                 className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
               >

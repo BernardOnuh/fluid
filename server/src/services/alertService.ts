@@ -1,6 +1,8 @@
 import type { AlertEmailConfig, AlertingConfig, Config } from "../config";
 import { SlackNotifier, type SlackNotifierLike } from "./slackNotifier";
 import type { FcmNotifierLike } from "./fcmNotifier";
+import { TwilioNotifier, type TwilioNotifierLike } from "./twilioNotifier";
+import { createNotification } from "./notificationService";
 
 type NodeMailerModule = {
   createTransport: (config: {
@@ -51,6 +53,7 @@ export interface AlertServiceOptions {
   dashboardUrl?: string;
   loadNodeMailer?: () => NodeMailerModule;
   fcmNotifier?: FcmNotifierLike;
+  twilioNotifier?: TwilioNotifierLike;
 }
 
 interface AlertState {
@@ -208,6 +211,7 @@ export class AlertService {
   private readonly now: () => number;
   private readonly state = new Map<string, AlertState>();
   private readonly fcmNotifier?: FcmNotifierLike;
+  private readonly twilioNotifier?: TwilioNotifierLike;
 
   constructor(
     private readonly config: AlertingConfig,
@@ -225,13 +229,22 @@ export class AlertService {
       options.loadNodeMailer ?? this.loadNodeMailer.bind(this);
     this.now = options.now ?? (() => Date.now());
     this.fcmNotifier = options.fcmNotifier;
+    this.twilioNotifier =
+      options.twilioNotifier ??
+      (config.twilio
+        ? new TwilioNotifier({
+            ...config.twilio,
+            criticalThresholdXlm: config.criticalBalanceThresholdXlm,
+          })
+        : undefined);
   }
 
   isEnabled(): boolean {
     return (
       Boolean(this.emailTransport) ||
       this.slackNotifier.isConfigured() ||
-      Boolean(this.fcmNotifier?.isConfigured())
+      Boolean(this.fcmNotifier?.isConfigured()) ||
+      Boolean(this.twilioNotifier?.isConfigured())
     );
   }
 
@@ -319,6 +332,21 @@ export class AlertService {
       );
     }
 
+    if (this.twilioNotifier?.isEnabled("low_balance")) {
+      tasks.push(
+        this.twilioNotifier
+          .notifyLowBalance({
+            accountPublicKey: payload.accountPublicKey,
+            balanceXlm: payload.balanceXlm,
+            thresholdXlm: payload.thresholdXlm,
+            criticalThresholdXlm:
+              this.config.criticalBalanceThresholdXlm ??
+              payload.thresholdXlm,
+          })
+          .then(() => undefined),
+      );
+    }
+
     if (tasks.length === 0) {
       return;
     }
@@ -337,6 +365,24 @@ export class AlertService {
     failures.forEach((failure) => {
       console.error("[AlertService] Alert transport failed:", failure.reason);
     });
+
+    // Persist the alert as an AdminNotification for the in-dashboard bell.
+    // Fire-and-forget: notification failure must not block alert delivery.
+    createNotification({
+      type: "low_balance",
+      title: `Low fee payer balance: ${payload.balanceXlm.toFixed(2)} XLM`,
+      message: `Account ${payload.accountPublicKey.slice(0, 8)}… dropped below the ${payload.thresholdXlm.toFixed(2)} XLM threshold.`,
+      metadata: {
+        accountPublicKey: payload.accountPublicKey,
+        balanceXlm: payload.balanceXlm,
+        thresholdXlm: payload.thresholdXlm,
+        networkPassphrase: payload.networkPassphrase,
+        horizonUrl: payload.horizonUrl,
+        checkedAt: payload.checkedAt.toISOString(),
+      },
+    }).catch((err) =>
+      console.error("[AlertService] Failed to persist dashboard notification:", err)
+    );
   }
 
   private async sendEmailAlert(

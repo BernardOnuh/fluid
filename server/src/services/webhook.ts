@@ -40,6 +40,8 @@ interface WebhookPayload {
 
 const WEBHOOK_SIGNATURE_HEADER = "X-Fluid-Signature-256";
 const WEBHOOK_SIGNATURE_PREFIX = "sha256=";
+const MAX_RETRY_ATTEMPTS = 5;
+const DLQ_EXPIRY_DAYS = parseInt(process.env.WEBHOOK_DLQ_EXPIRY_DAYS || "30", 10);
 
 export function serializeWebhookPayload(payload: string | WebhookPayload): string {
   return typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -299,17 +301,52 @@ export const startWebhookWorker = () => {
     { connection }
   );
 
-  worker.on("failed", (job: Job<WebhookJobData> | undefined, err: Error) => {
-    if (job && job.attemptsMade >= 5) {
+  worker.on("failed", async (job: Job<WebhookJobData> | undefined, err: Error) => {
+    if (job && job.attemptsMade >= MAX_RETRY_ATTEMPTS) {
+      const { deliveryId } = job.data;
+
       webhookLogger.error(
         {
           ...serializeError(err),
           attempts: job.attemptsMade,
-          delivery_id: job.data.deliveryId,
+          delivery_id: deliveryId,
           job_id: job.id,
         },
-        "Webhook delivery failed permanently"
+        "Webhook delivery failed permanently, moving to DLQ"
       );
+
+      try {
+        const delivery = await prisma.webhookDelivery.findUnique({
+          where: { id: deliveryId },
+        });
+
+        if (delivery) {
+          const expiresAt = new Date();
+          expiresAt.setDate(expiresAt.getDate() + DLQ_EXPIRY_DAYS);
+
+          await prisma.webhookDlq.create({
+            data: {
+              tenantId: delivery.tenantId,
+              deliveryId: delivery.id,
+              url: delivery.url,
+              payload: delivery.payload,
+              lastError: delivery.lastError,
+              retryCount: delivery.retryCount,
+              expiresAt,
+            },
+          });
+
+          webhookLogger.info(
+            { delivery_id: deliveryId, tenant_id: delivery.tenantId },
+            "Failed webhook delivery moved to DLQ"
+          );
+        }
+      } catch (dlqError) {
+        webhookLogger.error(
+          { ...serializeError(dlqError), delivery_id: deliveryId },
+          "Failed to move webhook delivery to DLQ"
+        );
+      }
     }
   });
 

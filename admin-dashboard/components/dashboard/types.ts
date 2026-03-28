@@ -79,6 +79,29 @@ export interface SubscriptionTierPageData {
   source: "live" | "sample";
 }
 
+export type WebhookEventType = "tx.success" | "tx.failed" | "balance.low";
+
+export interface WebhookTenantSettings {
+  tenantId: string;
+  tenantName: string | null;
+  webhookUrl: string | null;
+  eventTypes: WebhookEventType[];
+  updatedAt: string | null;
+}
+
+export interface WebhookDlqItem {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  deliveryId: string;
+  url: string;
+  payload: string;
+  lastError: string | null;
+  retryCount: number;
+  failedAt: string;
+  expiresAt: string;
+}
+
 export type TransactionHistorySort =
   | "time_desc"
   | "time_asc"
@@ -100,5 +123,24 @@ export interface TransactionHistoryPageData {
   totalPages: number;
   sort: TransactionHistorySort;
   search: string;
+  source: "live" | "sample";
+}
+
+export type PartnerStatus = "pending" | "approved" | "rejected";
+
+export interface Partner {
+  id: string;
+  projectName: string;
+  contactEmail: string;
+  websiteUrl: string;
+  description: string;
+  status: PartnerStatus;
+  submittedAt: string;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+}
+
+export interface PartnerPageData {
+  partners: Partner[];
   source: "live" | "sample";
 }
