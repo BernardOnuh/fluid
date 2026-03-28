@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* ─── Fluid Design System — CSS Variable Tokens ─────────────────────────────
  *

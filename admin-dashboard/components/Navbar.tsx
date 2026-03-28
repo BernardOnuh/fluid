@@ -60,6 +60,12 @@ export function Navbar() {
           >
             Roadmap
           </Link>
+          <Link
+            href="/changelog"
+            className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-block"
+          >
+            Changelog
+          </Link>
           <ThemeToggle />
         </nav>
       </div>
