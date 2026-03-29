@@ -17,7 +17,8 @@ export type ErrorCode =
   | "VALIDATION_ERROR"
   | "CONFIG_ERROR"
   | "EVM_SPONSOR_FAILED"
-  | "SOLANA_SPONSOR_FAILED";
+  | "SOLANA_SPONSOR_FAILED"
+  | "SANCTIONED_ADDRESS";
 
 export class AppError extends Error {
   public readonly statusCode: number;

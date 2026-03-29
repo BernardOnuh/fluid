@@ -11,7 +11,9 @@ export type AuditEventType =
   | "CHAIN_CREATED"
   | "CHAIN_UPDATED"
   | "CHAIN_DELETED"
-  | "AUDIT_EXPORT";
+  | "AUDIT_EXPORT"
+  | "OFAC_SCREENING_BLOCKED"
+  | "OFAC_SCREENING_PASSED";
 
 export function getAuditActor(req: Request): string {
   const adminUser = req.header("x-admin-user");

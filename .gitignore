@@ -10,8 +10,6 @@ target/
 *.node
 
 # Environment variables
-.env
-.env.local
 .env.*.local
 
 # Logs
@@ -51,3 +49,4 @@ coverage/
 .nyc_output/
 issue.md
 pr.md
+config.bat

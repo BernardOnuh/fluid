@@ -10,6 +10,8 @@ import { prisma } from "../utils/db";
 import { classifyTransactionCategory } from "../services/transactionCategorizer";
 import { getFeeManager } from "../services/feeManager";
 import { FeeSponsor, SponsorResponse } from "./base";
+import { screenAddresses, logScreeningResult } from "../services/ofacScreening";
+import { extractAddresses } from "../utils/stellarAddressExtractor";
 import { evaluateSARRules } from "../services/sarService";
 
 export interface StellarSponsorParams {
@@ -69,6 +71,20 @@ export class StellarFeeSponsor implements FeeSponsor {
         "Cannot fee-bump an already fee-bumped transaction",
         400,
         "ALREADY_FEE_BUMPED"
+      );
+    }
+
+    // OFAC sanctions screening — check all destination addresses before proceeding
+    const addresses = extractAddresses(innerTransaction);
+    const screeningResult = screenAddresses(addresses);
+    const innerTxHashForAudit = innerTransaction.hash().toString("hex");
+    logScreeningResult(innerTxHashForAudit, tenant.id, screeningResult).catch(() => {});
+
+    if (screeningResult.blocked) {
+      throw new AppError(
+        `Transaction rejected: destination address matches OFAC SDN list`,
+        451,
+        "SANCTIONED_ADDRESS"
       );
     }
 
