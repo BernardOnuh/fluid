@@ -266,6 +266,23 @@ model ChainRegistry {
   @@index([enabled])
 }
 
+model BridgeTransaction {
+  id            String   @id @default(uuid())
+  sourceChain   String   // e.g. "ethereum", "base"
+  targetChain   String   // e.g. "stellar"
+  sourceTxHash  String   @unique
+  targetTxHash  String?
+  vaa           String?  // The Wormhole VAA (hex or base64)
+  amount        BigInt   // Amount in base units (e.g. 6 decimals for USDC)
+  asset         String   // e.g. "USDC"
+  status        String   // PENDING, VAA_READY, COMPLETED, FAILED
+  error         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+  @@index([sourceTxHash])
+}
 // Tracks daily usage statistics for each tenant
 model TenantUsageStats {
   id            String   @id @default(uuid())

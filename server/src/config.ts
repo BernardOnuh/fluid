@@ -78,7 +78,7 @@ export interface Config {
   rateLimitMax: number;
   allowedOrigins: string[];
   alerting: AlertingConfig;
-  digest: DigestConfig;
+  digest?: DigestConfig;
   supportedAssets?: SupportedAsset[];
   maxXdrSize: number;
   maxOperations: number;

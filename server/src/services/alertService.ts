@@ -3,6 +3,7 @@ import { SlackNotifier, type SlackNotifierLike } from "./slackNotifier";
 import type { FcmNotifierLike } from "./fcmNotifier";
 import { TwilioNotifier, type TwilioNotifierLike } from "./twilioNotifier";
 import { createNotification } from "./notificationService";
+import type { TreasuryRebalancer } from "./treasuryRebalancer";
 
 type NodeMailerModule = {
   createTransport: (config: {
@@ -54,6 +55,7 @@ export interface AlertServiceOptions {
   loadNodeMailer?: () => NodeMailerModule;
   fcmNotifier?: FcmNotifierLike;
   twilioNotifier?: TwilioNotifierLike;
+  treasuryRebalancer?: TreasuryRebalancer;
 }
 
 interface AlertState {
@@ -212,6 +214,7 @@ export class AlertService {
   private readonly state = new Map<string, AlertState>();
   private readonly fcmNotifier?: FcmNotifierLike;
   private readonly twilioNotifier?: TwilioNotifierLike;
+  private readonly treasuryRebalancer?: TreasuryRebalancer;
 
   constructor(
     private readonly config: AlertingConfig,
@@ -237,6 +240,7 @@ export class AlertService {
             criticalThresholdXlm: config.criticalBalanceThresholdXlm,
           })
         : undefined);
+    this.treasuryRebalancer = options.treasuryRebalancer;
   }
 
   isEnabled(): boolean {
@@ -272,6 +276,11 @@ export class AlertService {
     }
 
     await this.notifyAdmins(payload);
+
+    if (this.treasuryRebalancer) {
+      void this.treasuryRebalancer.checkAndRebalance(payload.accountPublicKey, payload.balanceXlm);
+    }
+
     return true;
   }
 
