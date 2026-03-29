@@ -1,3 +1,10 @@
+# [1.16.0](https://github.com/Stellar-Fluid/fluid/compare/v1.15.0...v1.16.0) (2026-03-29)
+
+
+### Features
+
+* cosmos ibc feegrant module adapter ([d828038](https://github.com/Stellar-Fluid/fluid/commit/d82803839a55ba6abeca5705ba733d2b9031a36b)), closes [#195](https://github.com/Stellar-Fluid/fluid/issues/195)
+
 # [1.15.0](https://github.com/Stellar-Fluid/fluid/compare/v1.14.0...v1.15.0) (2026-03-29)
 
 
