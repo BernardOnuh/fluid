@@ -118,6 +118,7 @@ import { getFeeMultiplierHandler } from "./handlers/adminFeeMultiplier";
 import { estimateFeeHandler } from "./handlers/estimate";
 import { listAuditLogsHandler } from "./handlers/adminAuditLogs";
 import { startAuditSummaryWorker } from "./services/auditLog";
+import { multiChainStatsHandler } from "./handlers/adminMultiChainStats";
 import {
   listGrantersHandler,
   getGranterHandler,
@@ -432,6 +433,11 @@ app.post("/admin/digest/send-now", sendDigestNowHandler);
 // Audit logs
 app.get("/admin/audit-logs", (req: Request, res: Response) => {
   void listAuditLogsHandler(req, res);
+});
+
+// Multi-chain stats
+app.get("/admin/multi-chain/stats", (req: Request, res: Response) => {
+  void multiChainStatsHandler(req, res);
 });
 
 // Cosmos FeeGrant — granter config + allowance management

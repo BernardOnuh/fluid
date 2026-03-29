@@ -145,7 +145,10 @@ model SponsoredTransaction {
   tenantId   String
   tenant     Tenant   @relation(fields: [tenantId], references: [id])
   feeStroops BigInt
+  chain      String   @default("stellar") // stellar, evm, solana, cosmos
   createdAt  DateTime @default(now())
+
+  @@index([chain])
 }
 model SignerSecret {
   id                String   @id @default(uuid())
@@ -192,12 +195,14 @@ model Transaction {
   status      String   // PENDING, SUCCESS, FAILED
   costStroops BigInt
   category    String   @default("Other")
+  chain       String   @default("stellar") // stellar, evm, solana, cosmos
   createdAt   DateTime @default(now())
 
   @@index([tenantId])
   @@index([status])
   @@index([txHash])
   @@index([category])
+  @@index([chain])
 }
 
 // In-dashboard notification centre — persisted alerts for logged-in admins.

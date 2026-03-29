@@ -20,6 +20,8 @@ import { fluidAdminToken, fluidServerUrl } from "@/lib/server-env";
 import { getSpendForecastData } from "@/lib/spend-chart-data";
 import { getFeeMultiplierData } from "@/lib/fee-multiplier-data";
 import { FeeEstimatorWidget } from "@/components/dashboard/FeeEstimatorWidget";
+import { MultiChainDashboard } from "@/components/dashboard/MultiChainDashboard";
+import { getMultiChainData } from "@/lib/multi-chain-data";
 
 export default async function AdminDashboard() {
   const session = await auth();
@@ -29,6 +31,7 @@ export default async function AdminDashboard() {
   const { keys: apiKeys } = await getApiKeysPageData();
   const spendForecast = await getSpendForecastData();
   const feeMultiplier = await getFeeMultiplierData();
+  const multiChainData = await getMultiChainData();
   const firstActiveKey =
     apiKeys.find((k) => k.active)?.key ?? "your-api-key-here";
 
@@ -109,6 +112,11 @@ export default async function AdminDashboard() {
             delta={`${feeMultiplier.congestionLevel} congestion`}
             icon={Zap}
           />
+        </section>
+
+        {/* Multi-Chain Overview */}
+        <section className="mt-6">
+          <MultiChainDashboard data={multiChainData} />
         </section>
 
         {/* Spend Analytics Chart */}
