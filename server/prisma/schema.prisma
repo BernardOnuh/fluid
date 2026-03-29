@@ -215,6 +215,30 @@ model AdminNotification {
   @@index([createdAt])
 }
 
+// Health monitoring events for public status page
+model StatusEvent {
+  id          String   @id @default(uuid())
+  component   String   // "api" | "horizon" | "database"
+  status      String   // "operational" | "degraded" | "down"
+  message     String?  // Optional error message or description
+  metadata    String?  // JSON blob for extra context (response times, etc.)
+  createdAt   DateTime @default(now())
+
+  @@index([component])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Status page subscriptions for email notifications
+model StatusSubscription {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+}
 /// Tracks email addresses that have opted out of the daily digest.
 model DigestUnsubscribe {
   email     String   @id

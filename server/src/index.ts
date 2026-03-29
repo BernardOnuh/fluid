@@ -3,8 +3,6 @@ import "dotenv/config";
 import dotenv from "dotenv";
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
-import swaggerUi from "swagger-ui-express";
-import { swaggerSpec } from "./swagger";
 import rateLimit from "express-rate-limit";
 import { loadConfig } from "./config";
 import { AppError } from "./errors/AppError";
@@ -14,38 +12,68 @@ import {
   upsertApiKeyHandler,
 } from "./handlers/adminApiKeys";
 import {
-  listSubscriptionTiersHandler,
-  updateTenantSubscriptionTierHandler,
-} from "./handlers/adminSubscriptionTiers";
-import {
-  addSignerHandler,
-  listSignersHandler,
-  removeSignerHandler,
-} from "./handlers/adminSigners";
-import { getPriceHandler } from "./handlers/adminPrice";
+  deleteDeviceTokenHandler,
+  listDeviceTokensHandler,
+  registerDeviceTokenHandler,
+} from "./handlers/adminDeviceTokens";
 import {
   deleteDlqHandler,
   listDlqHandler,
   replayDlqHandler,
 } from "./handlers/adminDlq";
+import {
+  createNotificationHandler,
+  listNotificationsHandler,
+  markAllReadHandler,
+  markReadHandler,
+  notificationSseHandler,
+} from "./handlers/adminNotifications";
+import { getPriceHandler } from "./handlers/adminPrice";
+import {
+  addSignerHandler,
+  listSignersHandler,
+  removeSignerHandler,
+} from "./handlers/adminSigners";
+import {
+  listSubscriptionTiersHandler,
+  updateTenantSubscriptionTierHandler,
+} from "./handlers/adminSubscriptionTiers";
 import { badgeHandler } from "./handlers/badge";
 import { feeBumpBatchHandler, feeBumpHandler } from "./handlers/feeBump";
 import { playgroundFeeBumpHandler } from "./handlers/playground";
-import { createCheckoutSessionHandler, stripeWebhookHandler } from "./handlers/stripe";
 import {
-  getHorizonFailoverClient,
-  initializeHorizonFailoverClient,
-} from "./horizon/failoverClient";
+  incidentsHandler,
+  statusPageHandler,
+  subscribeHandler,
+  unsubscribeHandler,
+  uptimeHandler,
+} from "./handlers/statusPage";
+import {
+  createCheckoutSessionHandler,
+  stripeWebhookHandler,
+} from "./handlers/stripe";
+import { getHorizonFailoverClient } from "./horizon/failoverClient";
 import { apiKeyMiddleware } from "./middleware/apiKeys";
-import { createGlobalErrorHandler, notFoundHandler } from "./middleware/errorHandler";
+import {
+  createGlobalErrorHandler,
+  notFoundHandler,
+} from "./middleware/errorHandler";
 import { apiKeyRateLimit } from "./middleware/rateLimit";
 import { tenantTierTxLimit } from "./middleware/txLimit";
 import { AlertService } from "./services/alertService";
-import { hydratePersistedSigners, listAdminSigners } from "./services/signerRegistry";
+import { initializeFcmNotifier } from "./services/fcmNotifier";
+import { PagerDutyNotifier } from "./services/pagerDutyNotifier";
+import {
+  loadSlackNotifierOptionsFromEnv,
+  SlackNotifier,
+} from "./services/slackNotifier";
+import { StatusMonitorService } from "./services/statusMonitorService";
+import prisma from "./utils/db";
 import { createLogger, serializeError } from "./utils/logger";
 import redisClient from "./utils/redis";
 import { RedisRateLimitStore } from "./utils/redisRateLimitStore";
 import { initializeBalanceMonitor } from "./workers/balanceMonitor";
+import { initializeIncidentMonitor } from "./workers/incidentMonitor";
 import {
   getLedgerMonitor,
   initializeLedgerMonitor,
@@ -96,6 +124,7 @@ app.get("/docs.json", (_req: Request, res: Response) => {
   res.send(swaggerSpec);
 });
 
+const logger = createLogger({ component: "server" });
 const config = loadConfig();
 const feeManager = initializeFeeManager(config);
 const slackNotifier = new SlackNotifier(loadSlackNotifierOptionsFromEnv());
@@ -104,9 +133,16 @@ const fcmNotifier = initializeFcmNotifier();
 if (fcmNotifier.isConfigured()) {
   logger.info("FCM push notifications enabled");
 } else {
-  logger.info("FCM push notifications disabled - FCM_PROJECT_ID/FCM_CLIENT_EMAIL/FCM_PRIVATE_KEY not set");
+  logger.info(
+    "FCM push notifications disabled - FCM_PROJECT_ID/FCM_CLIENT_EMAIL/FCM_PRIVATE_KEY not set",
+  );
 }
-const alertService = new AlertService(config.alerting, slackNotifier, { fcmNotifier });
+const alertService = new AlertService(config.alerting, slackNotifier, {
+  fcmNotifier,
+});
+
+const app = express();
+app.use(express.json());
 
 // Use Redis-backed store for global IP rate limiting. Falls back to memory store if Redis unavailable.
 const windowSeconds = Math.max(1, Math.ceil(config.rateLimitWindowMs / 1000));
@@ -211,11 +247,44 @@ app.get("/health", (req: Request, res: Response) => {
   });
 });
 
+// Public status page routes (no authentication required)
+app.get("/status", (req: Request, res: Response, next: NextFunction) => {
+  void statusPageHandler(req, res, next, config);
+});
+
+app.get("/status/uptime", (req: Request, res: Response, next: NextFunction) => {
+  void uptimeHandler(req, res, next, config);
+});
+
+app.get(
+  "/status/incidents",
+  (req: Request, res: Response, next: NextFunction) => {
+    void incidentsHandler(req, res, next, config);
+  },
+);
+
+app.post(
+  "/status/subscribe",
+  (req: Request, res: Response, next: NextFunction) => {
+    void subscribeHandler(req, res, next);
+  },
+);
+
+app.post(
+  "/status/unsubscribe",
+  (req: Request, res: Response, next: NextFunction) => {
+    void unsubscribeHandler(req, res, next);
+  },
+);
+
 // Playground fee-bump endpoint — open CORS, dedicated IP rate limit (10/min)
 const playgroundLimiter = rateLimit({
   windowMs: 60_000,
   max: 10,
-  message: { error: "Playground rate limit reached. Try again in a minute.", code: "RATE_LIMITED" },
+  message: {
+    error: "Playground rate limit reached. Try again in a minute.",
+    code: "RATE_LIMITED",
+  },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -293,7 +362,10 @@ app.post("/admin/api-keys", upsertApiKeyHandler);
 app.patch("/admin/api-keys/:key/revoke", revokeApiKeyHandler);
 app.delete("/admin/api-keys/:key", revokeApiKeyHandler);
 app.get("/admin/subscription-tiers", listSubscriptionTiersHandler);
-app.patch("/admin/tenants/:tenantId/subscription-tier", updateTenantSubscriptionTierHandler);
+app.patch(
+  "/admin/tenants/:tenantId/subscription-tier",
+  updateTenantSubscriptionTierHandler,
+);
 app.get("/admin/signers", listSignersHandler(config));
 app.post("/admin/signers", addSignerHandler(config));
 app.delete("/admin/signers/:publicKey", removeSignerHandler(config));
@@ -310,7 +382,7 @@ app.post("/admin/webhooks/dlq/delete", deleteDlqHandler);
 
 // Notification centre routes (SSE must be registered before /:id/read)
 app.get("/admin/notifications/sse", (req: Request, res: Response) =>
-  notificationSseHandler(req, res)
+  notificationSseHandler(req, res),
 );
 app.get("/admin/notifications", (req: Request, res: Response) => {
   void listNotificationsHandler(req, res);
@@ -384,7 +456,10 @@ if (config.horizonUrls.length > 0) {
     ledgerMonitorInstance.start();
     logger.info("Ledger monitor worker started");
   } catch (error) {
-    logger.error({ ...serializeError(error) }, "Failed to start ledger monitor");
+    logger.error(
+      { ...serializeError(error) },
+      "Failed to start ledger monitor",
+    );
   }
 } else {
   logger.info("No Horizon URLs configured; ledger monitor disabled");
@@ -400,7 +475,10 @@ if (
     balanceMonitor.start();
     logger.info("Balance monitor worker started");
   } catch (error) {
-    logger.error({ ...serializeError(error) }, "Failed to start balance monitor");
+    logger.error(
+      { ...serializeError(error) },
+      "Failed to start balance monitor",
+    );
   }
 } else {
   logger.info(
@@ -410,11 +488,19 @@ if (
 
 if (pagerDutyNotifier.isConfigured() || fcmNotifier.isConfigured()) {
   try {
-    incidentMonitor = initializeIncidentMonitor(config, pagerDutyNotifier, {}, fcmNotifier);
+    incidentMonitor = initializeIncidentMonitor(
+      config,
+      pagerDutyNotifier,
+      {},
+      fcmNotifier,
+    );
     incidentMonitor.start();
     logger.info("Incident monitor worker started");
   } catch (error) {
-    logger.error({ ...serializeError(error) }, "Failed to start incident monitor");
+    logger.error(
+      { ...serializeError(error) },
+      "Failed to start incident monitor",
+    );
   }
 } else {
   logger.info("PagerDuty incident alerting disabled - routing key not set");
@@ -427,7 +513,23 @@ try {
     logger.info("Treasury refill worker started");
   }
 } catch (error) {
-  logger.error({ ...serializeError(error) }, "Failed to start treasury refill worker");
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start treasury refill worker",
+  );
+}
+
+// Initialize status monitor service
+let statusMonitor: StatusMonitorService | null = null;
+try {
+  statusMonitor = new StatusMonitorService(prisma, config);
+  statusMonitor.start();
+  logger.info("Status monitor worker started");
+} catch (error) {
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start status monitor worker",
+  );
 }
 
 // Daily email digest worker
