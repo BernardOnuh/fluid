@@ -5,6 +5,7 @@
   "readme": "README.md",
   "includeVersion": true,
   "searchInComments": true,
+  "skipErrorChecking": true,
   "navigationLinks": {
     "GitHub": "https://github.com/Stellar-Fluid/fluid"
   }

@@ -22,7 +22,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
     "db:seed": "prisma db seed",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "docs": "typedoc"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"
@@ -74,6 +75,7 @@
     "prisma": "^7.5.0",
     "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
+    "typedoc": "^0.28.18",
     "typescript": "^5.3.3",
     "vitest": "^4.1.2"
   }
